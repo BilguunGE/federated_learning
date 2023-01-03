@@ -43,7 +43,7 @@ class EdgeNode:
     def train_model(self):
         self.init_weights()
         self.model.compile(loss='mean_squared_error', optimizer='adam')
-        self.model.fit(self.training_data, self.target_data, epochs=500, verbose=0)
+        self.model.fit(self.training_data, self.target_data, epochs=50, verbose=0)
         msg = pickle.dumps(self.model.get_weights())
         self.soc.sendall(msg)
         print('Client send updated weights to the server')

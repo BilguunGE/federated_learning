@@ -80,7 +80,7 @@ class SocketThread(threading.Thread):
 training_data = np.array([[0,0], [0,1], [1,0], [1,1]])
 target_data = np.array([[0],[1],[1],[0]])
 model = Sequential()
-model.add(Dense(3, input_dim=2, activation='relu'))
+model.add(Dense(3, input_dim=2, activation='sigmoid'))
 model.add(Dense(1, activation='sigmoid'))
 model.compile(loss='mean_squared_error', optimizer='adam')
 

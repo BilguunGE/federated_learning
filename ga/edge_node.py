@@ -46,18 +46,14 @@ class EdgeNode:
         self.init_weights()
         keras_ga = pygad.kerasga.KerasGA(model=self.model,
                                  num_solutions=6)
-        num_generations = 50 
+        num_generations = 50
         num_parents_mating = 4 
         initial_population = keras_ga.population_weights
-        mutation_percent_genes = 5 # Percentage of genes to mutate. This parameter has no action if the parameter mutation_num_genes exists.
-    
-        parent_selection_type = "sss" # Type of parent selection.
-
-        crossover_type = "single_point" # Type of the crossover operator.
-
-        mutation_type = "random" # Type of the mutation operator.
-
-        keep_parents = 1 # Number of parents to keep in the next population. -1 means keep all parents and 0 means keep nothing.
+        mutation_percent_genes = 5 
+        parent_selection_type = "sss" 
+        crossover_type = "single_point" 
+        mutation_type = "random" 
+        keep_parents = 1 
 
         init_range_low = -2
         init_range_high = 5
