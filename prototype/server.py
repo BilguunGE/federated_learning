@@ -60,8 +60,7 @@ class SocketThread(threading.Thread):
 #training_data = np.array([[0,0], [0,1], [1,0], [1,1]])
 #target_data = np.array([[0],[1],[1],[0]])
 model = Sequential()
-model.add(Dense(3, input_dim=2, activation='relu'))
-model.add(Dense(3, activation='relu'))
+model.add(Dense(5, input_dim=2, activation='relu'))
 model.add(Dense(2, activation='linear'))
 model.compile(loss='mean_squared_error', optimizer='adam')
 

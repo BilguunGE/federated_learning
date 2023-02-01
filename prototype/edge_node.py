@@ -95,7 +95,6 @@ class EdgeNode:
             self.replay_buffer = deque([], maxlen=1000)
             self.init_global()
             self.init_model()
-            self.replay_rounds = 0
         else:
             self.memory = deque([], 2)
 
@@ -239,28 +238,28 @@ class EdgeNode:
                     data_to_cache[data] = data_to_cache.get(data, 0) + 1
             if len(data_to_cache) > 0:
                 data = random.choice(list(data_to_cache.keys()))
-                if len(self.memory.get_state()) < self.memory.capacity:
+                if len(self.memory.get_state()) <= self.memory.capacity:
                     self.cache_data(data) 
-                    #for _ in range(self.frequency[data]):
-                    #    self.remember(current_state, 1, self.get_reward(data, 3), self.memory.get_state())
+                    for _ in range(self.frequency[data]):
+                        self.remember(current_state, 1, self.get_reward(data, 3), self.memory.get_state())
                 else:
                     action = self.chooseAction(current_state, epsilon)
                     if action == 1:
                         self.cache_data(data)
-                    self.remember(current_state, action, self.get_reward(data, 3), self.memory.get_state())
+                    for _ in range(self.frequency[data]):
+                        self.remember(current_state, action, self.get_reward(data, 3), self.memory.get_state())
 
             print("Iteration {} done".format(i+1))
             x.append(i)
             y.append(self.frequency["hits"]/self.frequency["total"])
             epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay * i)
             self.experienceReplay()
-            if (i+1) %100 == 0:
+            if (i+1) % 20 == 0:
                 self.send_weights()
         
         print(self.frequency)
         print("Cache hit ratio: {}".format(self.frequency["hits"]/self.frequency["total"]))
         print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
-        self.print_cache()
         self.print_cache()
         x = np.array(x)
         y = np.array(y)
@@ -298,7 +297,7 @@ class EdgeNode:
         self.target_model.set_weights(weights)
     
     def send_weights(self):
-        msg = pickle.dumps(self.target_model.get_weights())
+        msg = pickle.dumps(self.model.get_weights())
         self.globalSoc.sendall(msg)
         print('Client send weights to global model')
         received_data = self.receive_data(self.globalSoc)
@@ -331,7 +330,7 @@ class EdgeNode:
         next_state = np.array(next_state)
         self.replay_buffer.appendleft((current_state, action, reward, next_state))
 
-    def experienceReplay(self, alpha=0.1, gamma=0.8, batch_size=200):
+    def experienceReplay(self, alpha=0.001, gamma=0.9, batch_size=200):
         if len(self.replay_buffer) < 600:
             return
         mini_batch = random.sample(self.replay_buffer, batch_size)
@@ -350,7 +349,3 @@ class EdgeNode:
             X.append(state)
             Y.append(current_q)
         self.model.fit(np.array(X), np.array(Y), batch_size=batch_size, verbose=0, shuffle=True)
-        self.replay_rounds += 1
-        if self.replay_rounds >= 20:
-            self.target_model.set_weights(self.model.get_weights())
-            self.replay_rounds = 0
