@@ -1,16 +1,18 @@
 from collections import deque
 from lru_cache import LRUCache
 from lfu_cache import LFUCache
-import socket, threading, pickle, keras, json, numpy as np, random
+import socket, threading, pickle, keras, json, numpy as np, random, matplotlib.pyplot as plt
 from math import e
 
 class SocketThread(threading.Thread):
-    def __init__(self, connection, client_info, is_data_cached, buffer_size=1024):
+    def __init__(self, connection, client_info, neighbors_cache:set, count, iteration, buffer_size=1024):
         threading.Thread.__init__(self)
         self.connection = connection
         self.client_info = client_info
         self.buffer_size = buffer_size
-        self.is_data_cached = is_data_cached
+        self.neighbors_cache = neighbors_cache
+        self.count = count
+        self.iteration = iteration
 
     def recv(self):
         received_data = b""
@@ -45,27 +47,26 @@ class SocketThread(threading.Thread):
                 self.connection.close()
                 print("Connection Closed with {client_info} due to an error.".format(client_info=self.client_info), end="\n\n")
                 break
-            if status == 1:
-                data_to_look = received_data
-                if self.is_data_cached(data_to_look):
-                    msg = pickle.dumps(data_to_look)
-                else:
-                    msg = pickle.dumps('0')
+            if status == 1 and received_data.get("iteration",0) == self.iteration:
+                cache = received_data.get("cache",[])
+                for data in cache:
+                    self.neighbors_cache.add(data)
+                msg = pickle.dumps("OK")
                 self.connection.sendall(msg)
-
+                self.count()
+                break
 
 class EdgeNode:
-    def __init__(self, port, neighbors, data_source, strategy = "fifo") -> None:
+    def __init__(self, port, neighbors, data_source, strategy = "fql") -> None:
         self.strategy = strategy
         self.init_memory()
-        self.frequency = {"total": 0, "hits":0, "n_hits":0}
+        self.frequency = {"total": 0, "hits": 0, "n_hits": 0}
         self.port = port
         self.neighbors = []
         self.active_connections = 0
         self.limit = len(neighbors)
-        file = open(data_source, 'r')
-        self.data_source = json.load(file)
-        threading.Thread(target=self.listen_for_neighbors).start()
+        self.data_source = json.load(open(data_source, 'r'))
+        threading.Thread(target=self.init_neighbors).start()
         for n_port in neighbors:
             while True:
                 try:
@@ -75,6 +76,9 @@ class EdgeNode:
                     break
                 except:
                     pass
+        while True:
+            if len(self.neighbors) >= self.limit and self.active_connections >= self.limit:
+                break
         if self.strategy == 'fql':
             self.init_weights()
             self.simulateAndLearn()
@@ -82,7 +86,7 @@ class EdgeNode:
             self.simulation()
 
     def init_memory(self):
-        if self.strategy == "lru":
+        if self.strategy == 'lru':
             self.memory = LRUCache(2)
         elif self.strategy == 'lfu':
             self.memory = LFUCache(2)
@@ -107,12 +111,163 @@ class EdgeNode:
         else:
             return self.memory.get(data) != -1
 
+    def get_cache(self):
+        if self.strategy == "fifo":
+            return list(self.memory)
+        else :
+            return [*self.memory.cache]
+
     def print_cache(self):
         if self.strategy == "fifo":
             print(self.memory)
         else:
             print(self.memory.cache)
 
+    def receive_data(self, soc):
+        received_data = b''
+        while str(received_data)[-2] != '.':
+            data = soc.recv(1024)
+            received_data += data
+        received_data = pickle.loads(received_data)
+        return received_data
+        
+    def init_neighbors(self):
+        self.soc = socket.socket()
+        print("Socket is created.")
+        self.soc.bind(("localhost", self.port))
+        print("Socket is bound to an address & port number.")
+        self.soc.listen(self.limit)
+        self.clients = []
+        while True:
+            try:
+                connection, client_info = self.soc.accept()
+                print("New Connection from {client_info}.".format(client_info=client_info))
+                self.clients.append((connection, client_info))
+                self.active_connections+=1
+                if self.active_connections >= self.limit:
+                    break
+            except:
+                self.soc.close()
+                print("(Timeout) Socket Closed Because no Connections Received.\n")
+                break
+
+    def count(self):
+        self.received_counter +=1
+
+    def listen_for_neighbors(self, iteration):
+        self.neighbors_cache = set()
+        self.received_counter = 0
+        for connection, client_info in self.clients:
+            thread = SocketThread(connection=connection, client_info=client_info, neighbors_cache=self.neighbors_cache, count=self.count, iteration=iteration)
+            thread.start()
+
+    def tell_neighbors(self, iteration):
+        for soc in self.neighbors:
+            while True:
+                msg = pickle.dumps({"cache": self.get_cache(), "iteration" : iteration})
+                try:
+                    soc.sendall(msg)
+                    msg = self.receive_data(soc)
+                    if msg == "OK": 
+                        break
+                except socket.error as e:
+                    print(e)
+        while True:
+            if self.received_counter >= self.limit:
+                break
+ 
+    def simulation(self):   
+        x = []
+        y = []
+        for i in range(4000):
+            self.listen_for_neighbors(i)
+            self.tell_neighbors(i)
+            reqs = self.data_source[str(i+1)]
+            total = len(reqs)
+            self.frequency["total"] += total
+            data_to_cache = {}
+            for req in reqs:
+                if self.is_data_cached(req):
+                    self.frequency["hits"]+=1
+                elif req in self.neighbors_cache:
+                    self.frequency["n_hits"]+=1
+                else:
+                    data_to_cache[req] = data_to_cache.get(req, 0) + 1 
+
+            if len(data_to_cache) > 0:
+                data = random.choice(list(data_to_cache.keys()))
+                self.cache_data(data)
+            
+            print("Iteration {} done".format(i+1))
+            x.append(i)
+            y.append(self.frequency["hits"]/self.frequency["total"])
+                           
+        print(self.frequency)
+        print("Cache hit ratio: {}".format(self.frequency["hits"]/self.frequency["total"]))
+        print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
+        self.print_cache()
+        x = np.array(x)
+        y = np.array(y)
+        plt.plot(x, y, marker='o')
+        plt.show()
+        self.soc.close()
+
+    def simulateAndLearn(self):
+        x = []
+        y = []
+        epsilon = 1 
+        max_epsilon = 1 
+        min_epsilon = 0.01 
+        decay = 0.01
+        for i in range(4000):
+            self.listen_for_neighbors(i)
+            self.tell_neighbors(i)
+            current_state = self.memory.get_state()
+            reqs = self.data_source[str(i+1)]
+            total = len(reqs)
+            self.frequency["total"] += total
+            data_to_cache = {}
+            for data in reqs:
+                self.frequency[data] = self.frequency.get(data, 0) + 1
+                if self.is_data_cached(data):
+                    self.frequency["hits"]+=1
+                    self.remember(current_state, 0, self.get_reward(data, 1), current_state)
+                elif data in self.neighbors_cache:
+                    self.frequency["n_hits"]+=1
+                    self.remember(current_state, 0, self.get_reward(data, 2), current_state)
+                else:
+                    data_to_cache[data] = data_to_cache.get(data, 0) + 1
+            if len(data_to_cache) > 0:
+                data = random.choice(list(data_to_cache.keys()))
+                if len(self.memory.get_state()) < self.memory.capacity:
+                    self.cache_data(data) 
+                    #for _ in range(self.frequency[data]):
+                    #    self.remember(current_state, 1, self.get_reward(data, 3), self.memory.get_state())
+                else:
+                    action = self.chooseAction(current_state, epsilon)
+                    if action == 1:
+                        self.cache_data(data)
+                    self.remember(current_state, action, self.get_reward(data, 3), self.memory.get_state())
+
+            print("Iteration {} done".format(i+1))
+            x.append(i)
+            y.append(self.frequency["hits"]/self.frequency["total"])
+            epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay * i)
+            self.experienceReplay()
+            if (i+1) %100 == 0:
+                self.send_weights()
+        
+        print(self.frequency)
+        print("Cache hit ratio: {}".format(self.frequency["hits"]/self.frequency["total"]))
+        print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
+        self.print_cache()
+        self.print_cache()
+        x = np.array(x)
+        y = np.array(y)
+        plt.plot(x, y, marker='o')
+        plt.show()
+        self.soc.close()
+    
     def init_global(self):
         self.globalSoc = socket.socket()
         print('Socket is created.')
@@ -130,8 +285,6 @@ class EdgeNode:
         self.model = keras.models.clone_model(model)
         self.target_model = keras.models.clone_model(model)
         self.model.compile(loss='mse', optimizer='adam')
-
-
 
     def init_weights(self):
         msg = 'init_weights'
@@ -153,7 +306,6 @@ class EdgeNode:
         print('Received weights from the server')
         self.model.set_weights(weights)
         self.target_model.set_weights(weights)
-        self.simulateAndLearn()
     
     def chooseAction(self, state, epsilon = 0.9):
         if random.random() < epsilon:
@@ -202,125 +354,3 @@ class EdgeNode:
         if self.replay_rounds >= 20:
             self.target_model.set_weights(self.model.get_weights())
             self.replay_rounds = 0
-
-    def listen_for_neighbors(self):
-        soc = socket.socket()
-        print("Socket is created.")
-        soc.bind(("localhost", self.port))
-        print("Socket is bound to an address & port number.")
-        soc.listen(self.limit)
-        while True:
-            try:
-                connection, client_info = soc.accept()
-                print("New Connection from {client_info}.".format(client_info=client_info))
-                client = SocketThread(connection=connection, client_info=client_info, is_data_cached=self.is_data_cached)
-                client.start()
-                self.active_connections+=1
-            except:
-                soc.close()
-                print("(Timeout) Socket Closed Because no Connections Received.\n")
-                break
-
-    def simulation(self):
-        while True:
-            if self.active_connections >= self.limit:
-                break
-        for i in range(4000):
-            reqs = self.data_source[str(i+1)]
-            total = len(reqs)
-            self.frequency["total"] += total
-            data_to_cache = set()
-            data_freq = {}
-            for req in reqs:
-                data_freq[req] = data_freq.get(req, 0) + 1
-                if self.is_data_cached(req):
-                    self.frequency["hits"]+=1
-                else:
-                    data_to_cache.add(req)
-            for data in data_to_cache:
-                if self.ask_neighbors(data):
-                    self.frequency["n_hits"]+=data_freq[data]
-                else:
-                    self.cache_data(data) 
-            print("Iteration {} done".format(i+1))
-                           
-        print(self.frequency)
-        print("Cache hit ratio: {}".format(self.frequency["hits"]/self.frequency["total"]))
-        print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
-        self.print_cache()
-
-    def simulateAndLearn(self):
-        while True:
-            if self.active_connections >= self.limit:
-                break
-        epsilon = 1 
-        max_epsilon = 1 
-        min_epsilon = 0.01 
-        decay = 0.01
-        for i in range(4000):
-            current_state = self.memory.get_state()
-            reqs = self.data_source[str(i+1)]
-            total = len(reqs)
-            self.frequency["total"] += total
-            data_to_cache = set()
-            data_req_freq = {}
-            for data in reqs:
-                data_req_freq[data] = data_req_freq.get(data, 0) + 1
-                self.frequency[data] = self.frequency.get(data, 0) + 1
-                if self.is_data_cached(data):
-                    self.frequency["hits"]+=1
-                    #self.remember(current_state, 0, self.get_reward(data, 1), current_state)
-                else:
-                    data_to_cache.add(data)
-            for data in data_to_cache:
-                if self.ask_neighbors(data):
-                    self.frequency["n_hits"]+=data_req_freq[data]
-                    #for _ in range(data_req_freq[data]):
-                        #self.remember(current_state, 0, self.get_reward(data, 2), current_state)
-                else:
-                    if len(self.memory.get_state()) < self.memory.capacity:
-                        self.cache_data(data) 
-                        #for _ in range(self.frequency[data]):
-                        #    self.remember(current_state, 1, self.get_reward(data, 3), self.memory.get_state())
-
-                    else:
-                        action = self.chooseAction(current_state, epsilon)
-                        if action == 1:
-                            self.cache_data(data)
-                        for _ in range(self.frequency[data]):
-                            self.remember(current_state, action, self.get_reward(data, 3), self.memory.get_state())
-
-            print("Iteration {} done".format(i+1))
-            epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay * i)
-            self.experienceReplay()            
-        print(self.frequency)
-        print("Cache hit ratio: {}".format(self.frequency["hits"]/self.frequency["total"]))
-        print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
-        self.print_cache()
-        self.send_weights()
-
-    def ask_neighbors(self, data_request):
-        for soc in self.neighbors:
-            msg = pickle.dumps(data_request)
-            try:
-                soc.sendall(msg)
-            except socket.error as e:
-                print(e)
-            received_data = self.receive_data(soc)
-            if received_data != '0':
-                return True
-        return False
-
-    def receive_data(self, soc):
-        received_data = b''
-        while str(received_data)[-2] != '.':
-            data = soc.recv(1024)
-            received_data += data
-        received_data = pickle.loads(received_data)
-        return received_data
-
-
-
-
-
-
