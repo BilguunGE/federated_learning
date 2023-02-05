@@ -1,5 +1,6 @@
 import random
 import json
+from numpy import mean
 FILE_A = 0.4
 FILE_B = 0.2
 FILE_C = 0.1
@@ -11,6 +12,13 @@ def simulateRequests():
     return reqList
 
 
-file = open('node1.json', 'r')
+file = open('results.json', 'r')
 data = json.load(file)
-print(data["1"])
+
+fifo = data["fifo"] 
+rfu = data["rfu"] 
+lfu = data["lfu"]
+
+print("fifo: ", mean(fifo))
+print("rfu: ", mean(rfu))
+print("lfu: ", mean(lfu))

@@ -92,7 +92,7 @@ class EdgeNode:
             self.memory = LFUCache(2)
         elif self.strategy == 'fql':
             self.memory = LFUCache(2)
-            self.replay_buffer = deque([], maxlen=1000)
+            self.replay_buffer = deque([], maxlen=600)
             self.init_global()
             self.init_model()
         else:
@@ -207,7 +207,7 @@ class EdgeNode:
         self.print_cache()
         x = np.array(x)
         y = np.array(y)
-        plt.plot(x, y, marker='o')
+        plt.plot(x, y, marker='o', markevery=500)
         plt.show()
         self.soc.close()
 
@@ -225,36 +225,40 @@ class EdgeNode:
             reqs = self.data_source[str(i+1)]
             total = len(reqs)
             self.frequency["total"] += total
-            data_to_cache = {}
+            self.req_frequency = {"total": total}
+            neighbor = set()
+            central = set()
             for data in reqs:
                 self.frequency[data] = self.frequency.get(data, 0) + 1
+                self.req_frequency[data] = self.req_frequency.get(data, 0) + 1
                 if self.is_data_cached(data):
                     self.frequency["hits"]+=1
-                    self.remember(current_state, 0, self.get_reward(data, 1), current_state)
                 elif data in self.neighbors_cache:
                     self.frequency["n_hits"]+=1
-                    self.remember(current_state, 0, self.get_reward(data, 2), current_state)
+                    neighbor.add(data)
                 else:
-                    data_to_cache[data] = data_to_cache.get(data, 0) + 1
+                    central.add(data)
+            data_to_cache = list(neighbor.union(central))
             if len(data_to_cache) > 0:
-                data = random.choice(list(data_to_cache.keys()))
-                if len(self.memory.get_state()) <= self.memory.capacity:
-                    self.cache_data(data) 
-                    for _ in range(self.frequency[data]):
-                        self.remember(current_state, 1, self.get_reward(data, 3), self.memory.get_state())
+                data = random.choice(data_to_cache)
+                if len([*self.memory.cache]) < self.memory.capacity:
+                    self.cache_data(data)
+                    action = 1 
                 else:
                     action = self.chooseAction(current_state, epsilon)
                     if action == 1:
                         self.cache_data(data)
-                    for _ in range(self.frequency[data]):
-                        self.remember(current_state, action, self.get_reward(data, 3), self.memory.get_state())
+            else:
+                action = 0
+            reward = self.accumulate_rewards(neighbor, central)
+            self.remember(current_state, action, reward, self.memory.get_state())
 
             print("Iteration {} done".format(i+1))
             x.append(i)
             y.append(self.frequency["hits"]/self.frequency["total"])
             epsilon = min_epsilon + (max_epsilon - min_epsilon) * np.exp(-decay * i)
             self.experienceReplay()
-            if (i+1) % 20 == 0:
+            if (i+1) % 50 == 0:
                 self.send_weights()
         
         print(self.frequency)
@@ -263,7 +267,7 @@ class EdgeNode:
         self.print_cache()
         x = np.array(x)
         y = np.array(y)
-        plt.plot(x, y, marker='o')
+        plt.plot(x, y, marker='o', markevery=100)
         plt.show()
         self.soc.close()
     
@@ -317,7 +321,8 @@ class EdgeNode:
         return np.argmax(prediction[0])
 
     def get_reward(self, data, method):
-        popularity = (self.frequency[data]/self.frequency["total"])
+        popularity = (self.req_frequency.get(data, 0)/self.req_frequency["total"])
+        #popularity = (self.frequency.get(data, 0)/self.frequency["total"])
         if method == 1:
             return popularity * e**(-0.2*10)
         elif method ==2:
@@ -325,13 +330,24 @@ class EdgeNode:
         else: 
             return popularity * e**((-0.2*10)+(-0.5*200))
 
+    def accumulate_rewards(self, neighbor, central):
+        reward = 0
+        next_state = [*self.memory.cache]
+        for d in next_state:
+            reward += self.get_reward(d, 1)
+        for d in neighbor:
+            reward += self.get_reward(d, 2)
+        for d in central:
+            reward += self.get_reward(d, 3)
+        return reward
+
     def remember(self, current_state, action, reward, next_state):
         current_state = np.array(current_state)
         next_state = np.array(next_state)
         self.replay_buffer.appendleft((current_state, action, reward, next_state))
 
-    def experienceReplay(self, alpha=0.001, gamma=0.9, batch_size=200):
-        if len(self.replay_buffer) < 600:
+    def experienceReplay(self, alpha=0.001, gamma=0.9, batch_size=100):
+        if len(self.replay_buffer) < 500:
             return
         mini_batch = random.sample(self.replay_buffer, batch_size)
         current_states = np.array([states[0] for states in mini_batch])
