@@ -57,7 +57,7 @@ class SocketThread(threading.Thread):
                 break
 
 class EdgeNode:
-    def __init__(self, port, neighbors, data_source, strategy = "fql") -> None:
+    def __init__(self, port, neighbors, id, strategy = "fql") -> None:
         self.strategy = strategy
         self.init_memory()
         self.frequency = {"total": 0, "hits": 0, "n_hits": 0}
@@ -65,7 +65,8 @@ class EdgeNode:
         self.neighbors = []
         self.active_connections = 0
         self.limit = len(neighbors)
-        self.data_source = json.load(open(data_source, 'r'))
+        self.id = id
+        self.data_source = json.load(open("node{}.json".format(id), 'r'))
         threading.Thread(target=self.init_neighbors).start()
         for n_port in neighbors:
             while True:
@@ -206,6 +207,8 @@ class EdgeNode:
         print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
         self.print_cache()
         x = np.array(x)
+        with open("{}{}.json".format(self.strategy, self.id), 'w') as f:
+            json.dump({"data":y}, f)
         y = np.array(y)
         plt.plot(x, y, marker='o', markevery=500)
         plt.show()
@@ -266,6 +269,8 @@ class EdgeNode:
         print("Cache hit + n_hit ratio: {}".format((self.frequency["hits"]+self.frequency["n_hits"])/self.frequency["total"]))
         self.print_cache()
         x = np.array(x)
+        with open("fql{}.json".format(self.id), 'w') as f:
+            json.dump({"data":y}, f)
         y = np.array(y)
         plt.plot(x, y, marker='o', markevery=100)
         plt.show()
