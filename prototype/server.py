@@ -88,7 +88,7 @@ while True:
         break
 
 num_of_iterations = 0
-while num_of_iterations <= 400:
+while num_of_iterations <= 4000:
     num_of_iterations+=1
     threads = []
     weights = []
